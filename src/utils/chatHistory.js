@@ -41,6 +41,11 @@ export class ChatHistory {
     }
 
     clear() {
+        const hadHistory = this.history.length > 0;
         this.history = [];
+        if (hadHistory) {
+            console.log("\n=== Chat History Cleared ===");
+            console.log("All previous search terms have been removed.");
+        }
     }
 } 

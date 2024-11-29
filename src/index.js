@@ -12,13 +12,25 @@ const rl = readline.createInterface({
 async function main() {
     const searchAgent = await createSearchAgent();
 
-    console.log("LLFS initialized. Type 'exit' to quit.");
+    console.log("LLFS initialized. Commands:");
+    console.log("- Type 'exit' to quit");
+    console.log("- Type 'clear' or 'clear history' to clear search history");
     
     const askQuestion = () => {
         rl.question("\nWhat are you looking for? ", async (query) => {
-            if (query.toLowerCase() === 'exit') {
+            const lowerQuery = query.toLowerCase().trim();
+            
+            // Handle commands
+            if (lowerQuery === 'exit') {
                 chatHistory.clear();
                 rl.close();
+                return;
+            }
+            
+            if (lowerQuery === 'clear' || lowerQuery === 'clear history') {
+                chatHistory.clear();
+                console.log("\nSearch history cleared. Starting fresh!");
+                askQuestion();
                 return;
             }
 
@@ -31,6 +43,8 @@ async function main() {
                 const context = chatHistory.getRecentContext();
                 if (context.length > 0) {
                     console.log(context.map(msg => `${msg.role}: ${msg.content}`).join('\n'));
+                } else {
+                    console.log("No search history.");
                 }
 
                 console.log("\nSearch Results:");

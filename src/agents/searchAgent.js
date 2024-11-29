@@ -33,6 +33,10 @@ Previous Search Terms:
 
 Current Query: {query}
 
+Special Commands:
+"clear history" or "start fresh" → Clear all previous terms and start new search
+"clear" → Clear all previous terms and start new search
+
 File Type Categories:
 ${generateTermsDescription()}
 
@@ -42,15 +46,13 @@ ${generateFileTypeExamples()}
 Examples of context-aware searches:
 Previous terms: "(filename)"
 "only pdfs" → (filename),filetype:pdf
-"add docx files too" → (filename),filetype:pdf,filetype:docx
-"show both pdf and word docs" → (filename),filetype:pdf,filetype:docx
-"only word documents" → (filename),filetype:docx
+"clear history and search pdfs" → filetype:pdf  (starts fresh)
+"start fresh with images" → image  (starts fresh)
 
 Directory Search Examples:
 "find (foldername) folder" → dir:(foldername)
 "folders named (foldername)" → dir:(foldername)
-"search in (foldername) folders" → dir:(foldername)
-"folders named (foldername1) or (foldername2)" → dir:(foldername1),dir:(foldername2)
+"clear and look in (foldername)" → dir:(foldername)  (starts fresh)
 
 Rules:
 1. For directory searches, ALWAYS use dir: prefix
