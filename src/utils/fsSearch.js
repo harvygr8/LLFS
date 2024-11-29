@@ -15,11 +15,8 @@ export const DEFAULT_SEARCH_PATHS = [
 const MAX_SCORE = 6;
 
 function scoreDirMatch(fullPath, dirTerm) {
-    // Normalize paths for comparison
     const normalizedPath = fullPath.toLowerCase();
     const normalizedTerm = dirTerm.toLowerCase();
-    
-    // Check if the term matches any part of the path
     const pathParts = normalizedPath.split(path.sep);
     
     // Exact directory name match
@@ -27,12 +24,12 @@ function scoreDirMatch(fullPath, dirTerm) {
         return MAX_SCORE;
     }
     
-    // Partial directory match
+    // Match part of directory name
     if (pathParts.some(part => part.includes(normalizedTerm))) {
         return MAX_SCORE - 1;
     }
     
-    // Path contains the term
+    // Match anywhere in path
     if (normalizedPath.includes(normalizedTerm)) {
         return MAX_SCORE - 2;
     }
@@ -162,14 +159,14 @@ export async function searchFileSystem(searchTerm) {
             for (const entry of entries) {
                 const fullPath = path.join(dirPath, entry.name);
                 
-                // check dir terms
-                const hasDirectoryTerm = terms.some(t => t.startsWith('dir:'));
+                // Separate directory and non-directory terms
+                const dirTerms = terms.filter(t => t.startsWith('dir:'));
+                const nonDirTerms = terms.filter(t => !t.startsWith('dir:'));
                 
                 if (entry.isDirectory()) {
-                    // Score directory matches first
-                    if (hasDirectoryTerm) {
-                        const dirScores = terms
-                            .filter(t => t.startsWith('dir:'))
+                    // Always score directories against dir: terms if they exist
+                    if (dirTerms.length > 0) {
+                        const dirScores = dirTerms
                             .map(term => scoreDirMatch(fullPath, term.replace('dir:', '')));
                         
                         const maxDirScore = Math.max(...dirScores);
@@ -180,15 +177,15 @@ export async function searchFileSystem(searchTerm) {
                                 isDirectory: true 
                             });
                         }
-                        // Don't search inside if we're looking for directories
-                        continue;
                     }
                     
-                    // Only search inside directories if we're not looking for directories
-                    await searchDir(fullPath);
-                } else if (!hasDirectoryTerm) {
-                    // Check if file matches ANY of the terms
-                    const scores = terms.map(term => scoreMatch(entry.name, term));
+                    // Always search inside directories unless we're ONLY looking for directories
+                    if (nonDirTerms.length > 0) {
+                        await searchDir(fullPath);
+                    }
+                } else if (nonDirTerms.length > 0) {
+                    // For files, only check against non-directory terms
+                    const scores = nonDirTerms.map(term => scoreMatch(entry.name, term));
                     const maxScore = Math.max(...scores);
                     if (maxScore > 0) {
                         results.push({ path: fullPath, score: maxScore, isDirectory: false });
@@ -196,7 +193,7 @@ export async function searchFileSystem(searchTerm) {
                 }
             }
         } catch (error) {
-            console.error(`error in ${dirPath}:`, error);
+            console.error(`Error searching directory ${dirPath}:`, error);
         }
     }
 
@@ -211,24 +208,36 @@ export async function searchFileSystem(searchTerm) {
 
     const filteredResults = results
         .filter(result => {
-            // Higher minimum score threshold
             if (result.score <= 2) return false;
             
-            // Must match all terms for multiple term searches
-            if (terms.length > 1) {
-                return terms.every(term => {
-                    const termScore = scoreMatch(
-                        path.basename(result.path),
-                        term
-                    );
-                    return termScore > 0;
-                });
+            const fileName = path.basename(result.path);
+            
+            // Handle directory searches differently
+            if (result.isDirectory) {
+                return true; // Already scored in scoreDirMatch
             }
             
-            return true;
+            // Handle file type filters
+            const fileTypes = terms
+                .filter(t => t.startsWith('filetype:'))
+                .map(t => t.replace('filetype:', ''));
+                
+            if (fileTypes.length > 0) {
+                const extension = fileName.split('.').pop()?.toLowerCase() || '';
+                if (!fileTypes.includes(extension)) {
+                    return false;
+                }
+            }
+            
+            // Handle content terms
+            const contentTerms = terms.filter(t => !t.startsWith('filetype:') && !t.startsWith('dir:'));
+            return contentTerms.length === 0 || contentTerms.every(term => {
+                const termScore = scoreMatch(fileName, term);
+                return termScore > 0;
+            });
         })
         .sort((a, b) => b.score - a.score)
-        .slice(0, 50); // Reduce max results
+        .slice(0, 50);
 
     return filteredResults;
 }
