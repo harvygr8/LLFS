@@ -27,10 +27,12 @@ async function main() {
                 });
 
                 console.log("\nSearch Results:");
-                if (result.refined_results && result.refined_results.length > 0) {
-                    result.refined_results.forEach(file => console.log(`- ${file}`));
+                if (result.refined_results?.length > 0) {
+                    result.refined_results.forEach(file => {
+                        console.log(`- ${file.path}`);
+                    });
                 } else {
-                    console.log("No files/directories found matching your query.");
+                    console.log("No files found matching your query.");
                 }
             } catch (error) {
                 console.error("Error during search:", error);

@@ -1,6 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileTypes, penalties } from './fileTypes.js';
+import { getTokenLength } from './tokenCounter.js';
 
 // default search paths
 export const DEFAULT_SEARCH_PATHS = [
@@ -10,81 +12,131 @@ export const DEFAULT_SEARCH_PATHS = [
     path.join(os.homedir(), 'Desktop')
 ];
 
+// Add MAX_SCORE as a constant at the top level
+const MAX_SCORE = 6;
+
+function scoreDirMatch(fullPath, dirTerm) {
+    // Normalize paths for comparison
+    const normalizedPath = fullPath.toLowerCase();
+    const normalizedTerm = dirTerm.toLowerCase();
+    
+    // Check if the term matches any part of the path
+    const pathParts = normalizedPath.split(path.sep);
+    
+    // Exact directory name match
+    if (pathParts.includes(normalizedTerm)) {
+        return MAX_SCORE;
+    }
+    
+    // Partial directory match
+    if (pathParts.some(part => part.includes(normalizedTerm))) {
+        return MAX_SCORE - 1;
+    }
+    
+    // Path contains the term
+    if (normalizedPath.includes(normalizedTerm)) {
+        return MAX_SCORE - 2;
+    }
+    
+    return 0;
+}
+
 function scoreMatch(fileName, term) {
     const nameWithoutExt = fileName.toLowerCase().replace(/\.[^/.]+$/, "");
     const originalName = fileName.replace(/\.[^/.]+$/, "");
     const extension = fileName.split('.').pop()?.toLowerCase() || '';
     term = term.toLowerCase().trim();
     
-    const MAX_SCORE = 6;  // max possible score
     let score = 0;
     
-    // check directory terms
-    const isDirectoryTerm = term.startsWith('dir:');
-    if (isDirectoryTerm) {
-        term = term.replace('dir:', '');
-        if (!fileName.includes('.')) {
-            // For directories, ONLY allow exact matches or compound name matches
-            if (nameWithoutExt === term || originalName === term) return MAX_SCORE;
-            if (term.includes('_')) {
-                const termParts = term.split('_').map(p => p.toLowerCase());
-                const nameParts = originalName.split('_').map(p => p.toLowerCase());
-                if (termParts.every(part => nameParts.includes(part))) return MAX_SCORE - 2;
-            }
-            return 0;
-        }
-        return 0;
+    // directory scoring
+    if (term.startsWith('dir:')) {
+        return scoreDirMatch(fileName, term.replace('dir:', ''));
     }
 
-    // file matching logic
-    const commonDocFormats = ['pdf', 'doc', 'docx', 'txt', 'rtf'];
-    const imageFormats = ['jpg', 'jpeg', 'png', 'gif'];
-    
     // base scoring
-    if (nameWithoutExt === term) score = MAX_SCORE;  // exact match
-    else if (nameWithoutExt.startsWith(term)) score = MAX_SCORE - 1;  // start match
-    else if (
-        new RegExp(`\\b${term}\\b`).test(nameWithoutExt) ||  // Exact word boundary
-        new RegExp(`\\b${term}_`).test(nameWithoutExt) ||     // Word with underscore
-        new RegExp(`_${term}\\b`).test(nameWithoutExt) ||     // Underscore before word
-        new RegExp(`\\b${term}[0-9]`).test(nameWithoutExt) || // Word with numbers
-        nameWithoutExt.includes(`_${term}_`)                   // Term between underscores
-    ) score = MAX_SCORE - 2;
-    else if (['resume', 'cv'].includes(term) && 
-        (nameWithoutExt.includes(term) || 
-         nameWithoutExt.includes('curriculum') || 
-         nameWithoutExt.includes('vitae'))
-    ) score = MAX_SCORE - 3;
+    score = getBaseScore(nameWithoutExt, term, MAX_SCORE);
     
-    // boost for file types
     if (score > 0) {
-        let boost = 0;
+        // apply type-specific boosts
+        score = applyTypeBoosts(score, term, extension);
         
-        // doc-type boost
-        if (['resume', 'cv', 'report', 'document', 'paper'].includes(term)) {
-            if (commonDocFormats.includes(extension)) boost += 1;
-        }
-        // image-type boost
-        else if (['photo', 'image', 'picture'].includes(term)) {
-            if (imageFormats.includes(extension)) boost += 1;
-        }
+        // apply penalties
+        score = applyPenalties(score, fileName);
         
-        // penalties
-        if (fileName.includes('config') || 
-            fileName.includes('test') || 
-            fileName.includes('example') ||
-            fileName.includes('temp')) {
-            boost -= 1;
-        }
-        
-        // apply boost with cap
-        score = Math.min(MAX_SCORE, Math.max(0, score + boost));
+        // ensure score stays within bounds
+        score = Math.min(MAX_SCORE, Math.max(0, score));
+    }
+    
+    // Handle file type filters
+    if (term.startsWith('filetype:')) {
+        const requestedType = term.replace('filetype:', '');
+        return extension === requestedType ? MAX_SCORE : 0;
     }
     
     return score;
 }
 
+function getBaseScore(name, term, MAX_SCORE) {
+    const normalizedTerm = term.replace(/\s+/g, '_');
+    const words = normalizedTerm.split('_');
+    
+    // Exact match (highest priority)
+    if (name === normalizedTerm) return MAX_SCORE;
+    
+    // Start match (high priority)
+    if (name.startsWith(normalizedTerm)) return MAX_SCORE - 1;
+    
+    // All words match in sequence
+    const termRegex = new RegExp(words.join('.*'), 'i');
+    if (termRegex.test(name)) return MAX_SCORE - 2;
+    
+    // All words match (any order)
+    if (words.every(word => name.includes(word))) return MAX_SCORE - 3;
+    
+    // Most words match (>70%)
+    const matchingWords = words.filter(word => name.includes(word));
+    if (matchingWords.length >= Math.ceil(words.length * 0.7)) return MAX_SCORE - 4;
+    
+    // Single exact word match
+    if (words.some(word => name.includes(word) && word.length > 2)) return MAX_SCORE - 5;
+    
+    return 0;
+}
+
+function applyTypeBoosts(score, term, extension) {
+    // Boost exact file type matches
+    if (term.startsWith('filetype:')) {
+        const requestedType = term.replace('filetype:', '');
+        return extension === requestedType ? score * 2 : 0;
+    }
+
+    // Apply type-specific boosts
+    for (const type of Object.values(fileTypes)) {
+        if (type.terms.includes(term)) {
+            // Strong boost for matching both term and format
+            if (type.formats.includes(extension)) {
+                return score * 1.5;
+            }
+            // Small boost for matching just the term
+            return score * 1.1;
+        }
+    }
+    return score;
+}
+
+function applyPenalties(score, fileName) {
+    if (penalties.terms.some(term => fileName.includes(term))) {
+        score += penalties.penalty;
+    }
+    return score;
+}
+
 export async function searchFileSystem(searchTerm) {
+    console.log("\n=== File System Search ===");
+    console.log("Search terms:", searchTerm);
+    console.log("Parsed terms:", searchTerm.toLowerCase().split(/[,|]/).map(t => t.trim()));
+    
     console.log("\n=== file system search ===");
     console.log("search paths:", DEFAULT_SEARCH_PATHS);
     console.log("search terms:", searchTerm);
@@ -100,7 +152,8 @@ export async function searchFileSystem(searchTerm) {
         return results;
     }
 
-    const terms = searchTerm.toLowerCase().split('|').map(t => t.trim());
+    // Split by comma OR pipe to handle both formats
+    const terms = searchTerm.toLowerCase().split(/[,|]/).map(t => t.trim());
 
     // recursive dir search
     async function searchDir(dirPath) {
@@ -114,20 +167,30 @@ export async function searchFileSystem(searchTerm) {
                 const hasDirectoryTerm = terms.some(t => t.startsWith('dir:'));
                 
                 if (entry.isDirectory()) {
-                    // process directories
+                    // Score directory matches first
                     if (hasDirectoryTerm) {
-                        const maxScore = Math.max(...terms.map(term => {
-                            const score = scoreMatch(entry.name, term);
-                            return score >= 2 ? score * 2 : score;
-                        }));
-                        if (maxScore > 0) {
-                            results.push({ path: fullPath, score: maxScore, isDirectory: true });
+                        const dirScores = terms
+                            .filter(t => t.startsWith('dir:'))
+                            .map(term => scoreDirMatch(fullPath, term.replace('dir:', '')));
+                        
+                        const maxDirScore = Math.max(...dirScores);
+                        if (maxDirScore > 0) {
+                            results.push({ 
+                                path: fullPath, 
+                                score: maxDirScore, 
+                                isDirectory: true 
+                            });
                         }
+                        // Don't search inside if we're looking for directories
+                        continue;
                     }
+                    
+                    // Only search inside directories if we're not looking for directories
                     await searchDir(fullPath);
                 } else if (!hasDirectoryTerm) {
-                    // process files
-                    const maxScore = Math.max(...terms.map(term => scoreMatch(entry.name, term)));
+                    // Check if file matches ANY of the terms
+                    const scores = terms.map(term => scoreMatch(entry.name, term));
+                    const maxScore = Math.max(...scores);
                     if (maxScore > 0) {
                         results.push({ path: fullPath, score: maxScore, isDirectory: false });
                     }
@@ -147,27 +210,59 @@ export async function searchFileSystem(searchTerm) {
         }
     }
 
-    // show matches
-    console.log("\nraw matches found:");
-    results.forEach(result => {
-        console.log(`- ${result.path} (score: ${result.score})`);
-    });
-
     const filteredResults = results
         .filter(result => {
-            if (terms.some(t => t.startsWith('dir:'))) {
-                return result.isDirectory ? result.score > 1 : false;
+            // Higher minimum score threshold
+            if (result.score <= 2) return false;
+            
+            // Must match all terms for multiple term searches
+            if (terms.length > 1) {
+                return terms.every(term => {
+                    const termScore = scoreMatch(
+                        path.basename(result.path),
+                        term
+                    );
+                    return termScore > 0;
+                });
             }
-            return result.score > 1;
+            
+            return true;
         })
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 50); // Reduce max results
 
-    console.log(`\ntotal found: ${results.length}`);
-    console.log(`after filtering: ${filteredResults.length}`);
+    return filteredResults;
+}
 
-    return filteredResults.map(result => ({
-        path: result.path,
-        score: result.score,
-        isDirectory: result.isDirectory || false
-    }));
+export class ConversationManager {
+    constructor(maxTokens = 4000) {
+        this.history = [];
+        this.maxTokens = maxTokens;
+    }
+
+    async addMessage(role, content) {
+        const message = { role, content, timestamp: Date.now() };
+        this.history.push(message);
+        await this.truncateHistory();
+    }
+
+    async truncateHistory() {
+        let totalTokens = 0;
+        for (let i = this.history.length - 1; i >= 0; i--) {
+            const tokens = await getTokenLength(this.history[i].content);
+            totalTokens += tokens;
+            if (totalTokens > this.maxTokens) {
+                this.history = this.history.slice(i + 1);
+                break;
+            }
+        }
+    }
+
+    getContext() {
+        return this.history.map(msg => `${msg.role}: ${msg.content}`).join('\n');
+    }
+
+    clear() {
+        this.history = [];
+    }
 }
