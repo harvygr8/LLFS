@@ -1,8 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { fileTypes, penalties } from './fileTypes.js';
-import { getTokenLength } from './tokenCounter.js';
+import { fileTypes, penalties } from './searchUtils.js';
 
 // default search paths
 export const DEFAULT_SEARCH_PATHS = [
