@@ -14,6 +14,65 @@ export const DEFAULT_SEARCH_PATHS = [
 // Add MAX_SCORE as a constant at the top level
 const MAX_SCORE = 6;
 
+// Add metadata extraction function
+async function getFileMetadata(filePath) {
+    try {
+        const stats = await fs.stat(filePath);
+        return {
+            created: stats.birthtime,
+            modified: stats.mtime,
+            accessed: stats.atime,
+            size: stats.size,
+            isDirectory: stats.isDirectory()
+        };
+    } catch (error) {
+        console.error(`Error getting metadata for ${filePath}:`, error);
+        return null;
+    }
+}
+
+// Add date matching function
+function matchesDateFilter(metadata, dateFilter) {
+    if (!dateFilter || !metadata) return true;
+    
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    // Check both created and modified dates
+    const fileCreated = new Date(metadata.created);
+    const fileModified = new Date(metadata.modified);
+    
+    const checkDate = (fileDate) => {
+        switch(dateFilter) {
+            case 'today':
+                return fileDate.toDateString() === today.toDateString();
+            case 'yesterday':
+                return fileDate.toDateString() === yesterday.toDateString();
+            case 'thisweek':
+                const weekAgo = new Date(today);
+                weekAgo.setDate(weekAgo.getDate() - 7);
+                return fileDate >= weekAgo;
+            case 'thismonth':
+                return fileDate.getMonth() === today.getMonth() && 
+                       fileDate.getFullYear() === today.getFullYear();
+            default:
+                if (dateFilter.startsWith('before:')) {
+                    const date = new Date(dateFilter.replace('before:', ''));
+                    return fileDate < date;
+                }
+                if (dateFilter.startsWith('after:')) {
+                    const date = new Date(dateFilter.replace('after:', ''));
+                    return fileDate > date;
+                }
+                return true;
+        }
+    };
+    
+    // Return true if either creation or modification date matches
+    return checkDate(fileCreated) || checkDate(fileModified);
+}
+
 function scoreDirMatch(fullPath, dirTerm) {
     const normalizedPath = fullPath.toLowerCase();
     const normalizedTerm = dirTerm.toLowerCase();
@@ -159,12 +218,16 @@ export async function searchFileSystem(searchTerm) {
             for (const entry of entries) {
                 const fullPath = path.join(dirPath, entry.name);
                 
+                // Get metadata for the entry
+                const metadata = await getFileMetadata(fullPath);
+                if (!metadata) continue;
+                
                 // Separate directory and non-directory terms
                 const dirTerms = terms.filter(t => t.startsWith('dir:'));
-                const nonDirTerms = terms.filter(t => !t.startsWith('dir:'));
+                const nonDirTerms = terms.filter(t => !t.startsWith('dir:') && !t.startsWith('time:'));
                 
                 if (entry.isDirectory()) {
-                    // Always score directories against dir: terms if they exist
+                    // Directory handling logic...
                     if (dirTerms.length > 0) {
                         const dirScores = dirTerms
                             .map(term => scoreDirMatch(fullPath, term.replace('dir:', '')));
@@ -174,21 +237,26 @@ export async function searchFileSystem(searchTerm) {
                             results.push({ 
                                 path: fullPath, 
                                 score: maxDirScore, 
-                                isDirectory: true 
+                                isDirectory: true,
+                                metadata: metadata
                             });
                         }
                     }
                     
-                    // Always search inside directories unless we're ONLY looking for directories
                     if (nonDirTerms.length > 0) {
                         await searchDir(fullPath);
                     }
                 } else if (nonDirTerms.length > 0) {
-                    // For files, only check against non-directory terms
+                    // File handling logic
                     const scores = nonDirTerms.map(term => scoreMatch(entry.name, term));
                     const maxScore = Math.max(...scores);
                     if (maxScore > 0) {
-                        results.push({ path: fullPath, score: maxScore, isDirectory: false });
+                        results.push({ 
+                            path: fullPath, 
+                            score: maxScore, 
+                            isDirectory: false, 
+                            metadata: metadata 
+                        });
                     }
                 }
             }
@@ -208,16 +276,17 @@ export async function searchFileSystem(searchTerm) {
 
     const filteredResults = results
         .filter(result => {
+            // First check basic score threshold
             if (result.score <= 2) return false;
             
             const fileName = path.basename(result.path);
             
             // Handle directory searches differently
             if (result.isDirectory) {
-                return true; // Already scored in scoreDirMatch
+                return true;
             }
             
-            // Handle file type filters
+            // Check file type filters
             const fileTypes = terms
                 .filter(t => t.startsWith('filetype:'))
                 .map(t => t.replace('filetype:', ''));
@@ -229,8 +298,26 @@ export async function searchFileSystem(searchTerm) {
                 }
             }
             
+            // Check date filters AFTER other filters
+            const dateFilters = terms.filter(t => 
+                t.startsWith('time:') || 
+                t.startsWith('date:')
+            );
+            
+            if (dateFilters.length > 0) {
+                const matchesDate = dateFilters.every(filter => 
+                    matchesDateFilter(result.metadata, filter.replace(/^(time:|date:)/, ''))
+                );
+                if (!matchesDate) return false;
+            }
+            
             // Handle content terms
-            const contentTerms = terms.filter(t => !t.startsWith('filetype:') && !t.startsWith('dir:'));
+            const contentTerms = terms.filter(t => 
+                !t.startsWith('filetype:') && 
+                !t.startsWith('dir:') && 
+                !t.startsWith('time:') && 
+                !t.startsWith('date:')
+            );
             return contentTerms.length === 0 || contentTerms.every(term => {
                 const termScore = scoreMatch(fileName, term);
                 return termScore > 0;

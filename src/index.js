@@ -9,6 +9,17 @@ const rl = readline.createInterface({
     output: process.stdout
 });
 
+function formatDate(date) {
+    return new Date(date).toLocaleString();
+}
+
+function formatSize(bytes) {
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    if (bytes === 0) return '0 Byte';
+    const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+    return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
+}
+
 async function main() {
     const searchAgent = await createSearchAgent();
 
@@ -50,7 +61,11 @@ async function main() {
                 console.log("\nSearch Results:");
                 if (result.refined_results?.length > 0) {
                     result.refined_results.forEach(file => {
-                        console.log(`- ${file.path}`);
+                        console.log(`\n- ${file.path}`);
+                        if (file.metadata) {
+                            console.log(`  Modified: ${formatDate(file.metadata.modified)}`);
+                            console.log(`  Size: ${formatSize(file.metadata.size)}`);
+                        }
                     });
                 } else {
                     console.log("No files found matching your query.");

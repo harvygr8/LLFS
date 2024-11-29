@@ -54,6 +54,27 @@ Directory Search Examples:
 "folders named (foldername)" → dir:(foldername)
 "clear and look in (foldername)" → dir:(foldername)  (starts fresh)
 
+Date Search Examples:
+"files from yesterday" → time:yesterday
+"screenshots from today" → screenshot,time:today
+"pdfs from this week" → filetype:pdf,time:thisweek
+"images from this month" → image,time:thismonth
+"files after March 1st" → time:after:2024-03-01
+"documents before 2024" → time:before:2024-01-01
+"photos from last week" → image,time:thisweek
+"videos from yesterday" → video,time:yesterday
+
+Time Rules:
+1. Use exact terms for recent periods:
+   - "today" → time:today
+   - "yesterday" → time:yesterday
+   - "this week" → time:thisweek
+   - "this month" → time:thismonth
+2. For specific dates:
+   - "before (date)" → time:before:YYYY-MM-DD
+   - "after (date)" → time:after:YYYY-MM-DD
+3. Time terms can be combined with other search terms
+
 Rules:
 1. For directory searches, ALWAYS use dir: prefix
 2. For file types, ALWAYS use filetype: prefix
@@ -88,10 +109,18 @@ Return ONLY comma-separated terms. No other text.`);
               - ALWAYS use "dir:" prefix for EACH directory term
               - Example: "folder named {foldername}" → "dir:{foldername}"
               - Example: "in {foldername1} and {foldername2}" → "dir:{foldername1},dir:{foldername2}"
-            - ALWAYS use filetype: prefix for ANY file format mentioned:
-              - "pdf" → "filetype:pdf"
-              - "docx files" → "filetype:docx"
-              - "pdf and docx" → "filetype:pdf,filetype:docx"
+              - ALWAYS use filetype: prefix for ANY file format mentioned:
+                - "pdf" → "filetype:pdf"
+                - "docx files" → "filetype:docx"
+                - "pdf and docx" → "filetype:pdf,filetype:docx"
+            - For time-based searches:
+              - ALWAYS convert natural language to time: prefix
+                - Example: "from today" → "time:today"
+                - Example: "from yesterday" → "time:yesterday"
+                - NEVER include words like "from", "in", "and" in the final terms
+            - NEVER drop search terms when adding time filters
+              - Example: "screenshot from today" → "screenshot,time:today"
+              - Example: "pdfs from yesterday" → "filetype:pdf,time:yesterday"
             - Current terms: ${previousTerms}`),
             new HumanMessage(await searchPrompt.format({
                 query: state.query,
